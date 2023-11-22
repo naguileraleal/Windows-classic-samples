@@ -1,0 +1,33 @@
+# Extensions
+*.suo
+*.sdf
+*.opensdf
+*.out
+*.exe
+out
+dist*
+*.dll
+*.ini
+*.0
+*.crt
+.env
+*.log
+*.pyc
+*.key
+*.ovpn
+
+# Visual Studio/VSCode files
+.vscode
+.vs
+
+# Dependency directories
+Bibliotecas/
+node_modules
+
+# Ignore every visual studio build directory at any level below the .gitignore file
+Release/
+Debug/
+Deploy/
+x64/
+ipch/
+packages/
