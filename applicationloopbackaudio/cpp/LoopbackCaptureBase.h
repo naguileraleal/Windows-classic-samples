@@ -23,6 +23,8 @@ if (FAILED(hres)) \
     goto Exit;\
 }
 
+#define BITS_PER_BYTE 8
+
 /**
 * Base class for LoopbackCaptureSync and LoopbackCaptureAsync classes
 * 
@@ -41,6 +43,9 @@ public:
     // Takes an audio framebuffer and outputs a resampled framebuffer, resampled to the format specified by m_pOutputFormat
     void resampleAudioStream(BYTE* src, BYTE* dst, UINT32 framesAvailable, UINT32 clientFramesAvailable, UINT32& framesWritten);
 
+    // This constructor sets the values for m_CaptureFormat
+    LoopbackCaptureBase();
+
 protected:
     // Output stream to an output endpoint
     IAudioClient* m_OutputAudioClient = NULL;
@@ -51,7 +56,7 @@ protected:
     // Sample format compatible with the output client
     WAVEFORMATEXTENSIBLE* m_pOutputFormat = NULL;
     // Sample format of the captured samples
-    WAVEFORMATEX m_CaptureFormat{};
+    WAVEFORMATEX m_CaptureFormat {};
     wil::com_ptr_nothrow<IAudioClient> m_AudioClient;
     wil::com_ptr_nothrow<IAudioCaptureClient> m_AudioCaptureClient;
 };

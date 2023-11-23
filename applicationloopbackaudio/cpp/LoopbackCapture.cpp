@@ -3,8 +3,6 @@
 #include <audioclientactivationparams.h>
 #include "LoopbackCapture.h"
 
-#define BITS_PER_BYTE 8
-
 HRESULT CLoopbackCapture::SetDeviceStateErrorIfFailed(HRESULT hr)
 {
     if (FAILED(hr))
@@ -107,6 +105,7 @@ HRESULT CLoopbackCapture::ActivateCompleted(IActivateAudioInterfaceAsyncOperatio
             RETURN_IF_FAILED(punkAudioInterface.copy_to(&m_AudioClient));
 
             // Try to upgrade IAudioClient
+            // Note: Returns "No such interface supported"
             auto hr = m_AudioClient->QueryInterface(__uuidof(IAudioClient2), reinterpret_cast<void**>(&m_AudioClient2));
             if (FAILED(hr))
             {
@@ -116,16 +115,6 @@ HRESULT CLoopbackCapture::ActivateCompleted(IActivateAudioInterfaceAsyncOperatio
                 std::wstring s(errMsg);
                 std::wcout << L"QueryInterface Error: " << s << std::endl;
             }
-
-            // The app can also call m_AudioClient->GetMixFormat instead to get the capture format.
-            // The only supported format is 16-bit PCM format!
-            m_CaptureFormat.wFormatTag = WAVE_FORMAT_PCM;
-            m_CaptureFormat.nChannels = 2;
-            m_CaptureFormat.nSamplesPerSec = 44100;
-            m_CaptureFormat.wBitsPerSample = 16;
-            m_CaptureFormat.nBlockAlign = m_CaptureFormat.nChannels * m_CaptureFormat.wBitsPerSample / BITS_PER_BYTE;
-            m_CaptureFormat.nAvgBytesPerSec = m_CaptureFormat.nSamplesPerSec *m_CaptureFormat.nBlockAlign;
-            m_CaptureFormat.cbSize = 0;
 
             // output format will be null if there's no output client
             if (m_pOutputFormat)
@@ -144,6 +133,7 @@ HRESULT CLoopbackCapture::ActivateCompleted(IActivateAudioInterfaceAsyncOperatio
             }
 
             // Get the device period
+            // Note: Returns "Not implemented" ...
             REFERENCE_TIME hnsDefaultDevicePeriod;
             REFERENCE_TIME hnsMinimumDevicePeriod;
             hr = m_AudioClient->GetDevicePeriod(&hnsDefaultDevicePeriod, &hnsMinimumDevicePeriod);
@@ -161,7 +151,6 @@ HRESULT CLoopbackCapture::ActivateCompleted(IActivateAudioInterfaceAsyncOperatio
             }
 
             // Initialize the AudioClient in Shared Mode with the user specified buffer
-            // Note: It is a lie that the audio client resamples the audio to the output format. It does not even resample it to the sample rate!
             RETURN_IF_FAILED(m_AudioClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
                 AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
                 0,
@@ -170,11 +159,12 @@ HRESULT CLoopbackCapture::ActivateCompleted(IActivateAudioInterfaceAsyncOperatio
                 nullptr));
 
             // Get the maximum size of the AudioClient Buffer
+            // Note: Returns 0
             RETURN_IF_FAILED(m_AudioClient->GetBufferSize(&m_BufferFrames));
             std::cout << "Buffer size: " << m_BufferFrames << " frames" << std::endl;
 
             // Get an Audio Clock to retrieve the current position in the stream
-            // Note: This is not the same as the system clock!
+            // Note: Returns "No such interface supported"
             hr = m_AudioClient->GetService(IID_PPV_ARGS(&m_pAudioClock));
             if (FAILED(hr))
             {
@@ -183,6 +173,23 @@ HRESULT CLoopbackCapture::ActivateCompleted(IActivateAudioInterfaceAsyncOperatio
                 LPCTSTR errMsg = err.ErrorMessage();
                 std::wstring s(errMsg);
                 std::wcout << L"Error while requesting an AudioClock: " << s << std::endl;
+            }
+
+            // Get the maximum stream latency
+            // Note: Returns "not implemented"
+            REFERENCE_TIME streamLatency;
+            hr = m_AudioClient->GetStreamLatency(&streamLatency);
+            if (FAILED(hr))
+            {
+                // Print message from hresult
+                _com_error err(hr);
+                LPCTSTR errMsg = err.ErrorMessage();
+                std::wstring s(errMsg);
+                std::wcout << L"GetStreamLatency error: " << s << std::endl;
+            }
+            else
+            {
+                std::cout << "StreamLatency: " << streamLatency << std::endl;
             }
 
             // Get the capture client
@@ -307,29 +314,16 @@ HRESULT CLoopbackCapture::StartCaptureAsync(DWORD processId, bool includeProcess
 //
 HRESULT CLoopbackCapture::OnStartCapture(IMFAsyncResult* pResult)
 {
+    std::cout << "\n\n#####################" << __FUNCTION__ << "#####################\n\n";
     return SetDeviceStateErrorIfFailed([&]()->HRESULT
         {
             // Start the capture
             RETURN_IF_FAILED(m_AudioClient->Start());
 
-            // Get the device period
-            REFERENCE_TIME streamLatency;
-            auto hr = m_AudioClient->GetStreamLatency(&streamLatency);
-            if (FAILED(hr))
-            {
-                // Print message from hresult
-                _com_error err(hr);
-                LPCTSTR errMsg = err.ErrorMessage();
-                std::wstring s(errMsg);
-                std::wcout << L"GetStreamLatency error: " << s << std::endl;
-            }
-            else
-            {
-                std::cout << "StreamLatency: " << streamLatency << std::endl;
-            }
-
             m_DeviceState = DeviceState::Capturing;
             MFPutWaitingWorkItem(m_SampleReadyEvent.get(), 0, m_SampleReadyAsyncResult.get(), &m_SampleReadyKey);
+
+            std::cout << "\n\n##################### Leaving " << __FUNCTION__ << "#####################\n\n";
 
             return S_OK;
         }());
@@ -498,138 +492,151 @@ HRESULT CLoopbackCapture::OnAudioSampleRequested()
     //
     // We do this by calling IAudioCaptureClient::GetNextPacketSize
     // over and over again until it indicates there are no more packets remaining.
-    while (SUCCEEDED(m_AudioCaptureClient->GetNextPacketSize(&FramesAvailable)) && FramesAvailable > 0)
+
+// TODO: DEBUGGING! DELETE TIMING CODE!
     {
-        cbBytesToCapture = FramesAvailable * m_CaptureFormat.nBlockAlign;
-
-        // WAV files have a 4GB (0xFFFFFFFF) size limit, so likely we have hit that limit when we
-        // overflow here.  Time to stop the capture
-        if ((m_cbDataSize + cbBytesToCapture) < m_cbDataSize)
+        LARGE_INTEGER frequency, OnAudioSampleRequestedStartTime, OnAudioSampleRequestedEndTime;
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&OnAudioSampleRequestedStartTime);
+        while (SUCCEEDED(m_AudioCaptureClient->GetNextPacketSize(&FramesAvailable)) && FramesAvailable > 0)
         {
-            StopCaptureAsync();
-            break;
-        }
+            cbBytesToCapture = FramesAvailable * m_CaptureFormat.nBlockAlign;
 
-        // Get sample buffer
-        RETURN_IF_FAILED(m_AudioCaptureClient->GetBuffer(&Data, &FramesAvailable, &dwCaptureFlags, &u64DevicePosition, &u64QPCPosition));
-
-        if (dwCaptureFlags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
-        {
-            std::cout << "Timestamp error!" << std::endl;
-        }
-        else
-        {
-            UINT32 captureClientCurrentPadding = 0;
-            m_AudioClient->GetCurrentPadding(&captureClientCurrentPadding);
-            m_u64QPCPositionPrev = u64QPCPosition;
-            LARGE_INTEGER frequency, endTime;
-            // Ticks per second
-            QueryPerformanceFrequency(&frequency);
-            QueryPerformanceCounter(&endTime);
-            LONGLONG endTimeMicroseconds = (endTime.QuadPart * 1000000) / frequency.QuadPart;
-            LONGLONG elapsedTime = endTimeMicroseconds - (u64QPCPosition/10), maxDelay = 15000;
-            if (elapsedTime > maxDelay)
+            // WAV files have a 4GB (0xFFFFFFFF) size limit, so likely we have hit that limit when we
+            // overflow here.  Time to stop the capture
+            if ((m_cbDataSize + cbBytesToCapture) < m_cbDataSize)
             {
-                std::cout << "Time elapsed since the first frame of the audio packet was written: " << elapsedTime << " us" << std::endl;
-                // Release the loopback capture's buffer back
-                hr = m_AudioCaptureClient->ReleaseBuffer(FramesAvailable);
-                RETURN_IF_FAILED(hr);
-                // Discard samples that are older than maxDelay microseconds
-                while (SUCCEEDED(m_AudioCaptureClient->GetNextPacketSize(&FramesAvailable)) && FramesAvailable > 0)
-                {
-                    RETURN_IF_FAILED(m_AudioCaptureClient->GetBuffer(&Data, &FramesAvailable, &dwCaptureFlags, &u64DevicePosition, &u64QPCPosition));
-                    hr = m_AudioCaptureClient->ReleaseBuffer(FramesAvailable);
-                    RETURN_IF_FAILED(hr);
-                }
-
-                //if (m_OutputAudioClient != nullptr && m_bAudioStreamStarted)
-                //{
-                //	m_OutputAudioClient->Stop();
-                //	m_OutputAudioClient->Reset();
-                //	m_OutputAudioClient->Start();
-                //}
-                std::cout << "Discarded all late samples" << std::endl;
-
-                continue;
+                StopCaptureAsync();
+                break;
             }
 
-        }
-  //      // Write File
-        //if (m_DeviceState != DeviceState::Stopping)
-        //{
-        //	DWORD dwBytesWritten = 0;
-        //	RETURN_IF_WIN32_BOOL_FALSE(WriteFile(
-        //		m_hFile.get(),
-        //		Data,
-        //		cbBytesToCapture,
-        //		&dwBytesWritten,
-        //		NULL));
-        //}
+            // Get sample buffer
+            RETURN_IF_FAILED(m_AudioCaptureClient->GetBuffer(&Data, &FramesAvailable, &dwCaptureFlags, &u64DevicePosition, &u64QPCPosition));
 
-        // Stream to endpoint
-        if (m_OutputAudioClient != nullptr)
-        {
-            if (!m_bAudioStreamStarted)
+            if (dwCaptureFlags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
             {
-                hr = m_OutputAudioClient->Start();
-                RETURN_IF_FAILED(hr);
-                m_bAudioStreamStarted = true;
-
-                // Initialize audio resampler transform (if needed)
-                if (m_ResamplerTransform != nullptr)
-                {
-                    hr = m_ResamplerTransform->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, NULL);
-                    hr = m_ResamplerTransform->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, NULL);
-                    hr = m_ResamplerTransform->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, NULL);
-                }
-            }
-
-            // See how much buffer space is available.
-            UINT32 numFramesPadding = 0;
-            auto hr = m_OutputAudioClient->GetCurrentPadding(&numFramesPadding);
-            RETURN_IF_FAILED(hr);
-            std::cout << "Output client current padding: " << numFramesPadding << std::endl;
-
-            // Get the actual size of the allocated buffer.
-            UINT32 bufferFrameCount = 0;
-            hr = m_OutputAudioClient->GetBufferSize(&bufferFrameCount);
-            RETURN_IF_FAILED(hr);
-
-            // Space available in the render client's buffer
-            UINT32 clientFramesAvailable = bufferFrameCount - numFramesPadding;
-
-            // Check that there's enough space in the audio client to take in all the data obtained from the loopback interface
-            if (clientFramesAvailable < FramesAvailable)
-            {
-                std::cout << "No space available in the render client to play back all the captured audio frames" << std::endl;
+                std::cout << "Timestamp error!" << std::endl;
             }
             else
             {
-                // Grab all the available space in the shared buffer.
-                BYTE* pData = NULL;
+                UINT32 captureClientCurrentPadding = 0;
+                m_AudioClient->GetCurrentPadding(&captureClientCurrentPadding);
+                m_u64QPCPositionPrev = u64QPCPosition;
+                LARGE_INTEGER endTime;
+                // Ticks per second
+                QueryPerformanceCounter(&endTime);
+                LONGLONG endTimeMicroseconds = (endTime.QuadPart * 1000000) / frequency.QuadPart;
+                LONGLONG elapsedTime = endTimeMicroseconds - (u64QPCPosition / 10), maxDelay = 15000;
+                if (elapsedTime > maxDelay)
+                {
+                    std::cout << "Time elapsed since the first frame of the audio packet was written: " << elapsedTime << " us" << std::endl;
+                    // Release the loopback capture's buffer back
+                    hr = m_AudioCaptureClient->ReleaseBuffer(FramesAvailable);
+                    RETURN_IF_FAILED(hr);
+                    // Discard samples that are older than maxDelay microseconds
+                    while (SUCCEEDED(m_AudioCaptureClient->GetNextPacketSize(&FramesAvailable)) && FramesAvailable > 0)
+                    {
+                        RETURN_IF_FAILED(m_AudioCaptureClient->GetBuffer(&Data, &FramesAvailable, &dwCaptureFlags, &u64DevicePosition, &u64QPCPosition));
+                        hr = m_AudioCaptureClient->ReleaseBuffer(FramesAvailable);
+                        RETURN_IF_FAILED(hr);
+                    }
+
+                    //if (m_OutputAudioClient != nullptr && m_bAudioStreamStarted)
+                    //{
+                    //	m_OutputAudioClient->Stop();
+                    //	m_OutputAudioClient->Reset();
+                    //	m_OutputAudioClient->Start();
+                    //}
+                    std::cout << "Discarded all late samples" << std::endl;
+
+                    continue;
+                }
+
+            }
+            //      // Write File
+                  //if (m_DeviceState != DeviceState::Stopping)
+                  //{
+                  //	DWORD dwBytesWritten = 0;
+                  //	RETURN_IF_WIN32_BOOL_FALSE(WriteFile(
+                  //		m_hFile.get(),
+                  //		Data,
+                  //		cbBytesToCapture,
+                  //		&dwBytesWritten,
+                  //		NULL));
+                  //}
+
+                  // Stream to endpoint
+            if (m_OutputAudioClient != nullptr)
+            {
+                if (!m_bAudioStreamStarted)
+                {
+                    hr = m_OutputAudioClient->Start();
+                    RETURN_IF_FAILED(hr);
+                    m_bAudioStreamStarted = true;
+
+                    // Initialize audio resampler transform (if needed)
+                    if (m_ResamplerTransform != nullptr)
+                    {
+                        hr = m_ResamplerTransform->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, NULL);
+                        hr = m_ResamplerTransform->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, NULL);
+                        hr = m_ResamplerTransform->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, NULL);
+                    }
+                }
+
+                // See how much buffer space is available.
+                UINT32 numFramesPadding = 0;
+                auto hr = m_OutputAudioClient->GetCurrentPadding(&numFramesPadding);
+                RETURN_IF_FAILED(hr);
+                std::cout << "Output client current padding: " << numFramesPadding << std::endl;
+
+                // Get the actual size of the allocated buffer.
+                UINT32 bufferFrameCount = 0;
+                hr = m_OutputAudioClient->GetBufferSize(&bufferFrameCount);
+                RETURN_IF_FAILED(hr);
+
+                // Space available in the render client's buffer
+                UINT32 clientFramesAvailable = bufferFrameCount - numFramesPadding;
+
+                // Check that there's enough space in the audio client to take in all the data obtained from the loopback interface
                 float samplingRatio = (float)m_pOutputFormat->Format.nSamplesPerSec / (float)m_CaptureFormat.nSamplesPerSec;
-                hr = m_OutputRenderClient->GetBuffer((int)(FramesAvailable * samplingRatio)+1, &pData);
-                RETURN_IF_FAILED(hr);
+                if (clientFramesAvailable < (int)(FramesAvailable * samplingRatio) + 1)
+                {
+                    std::cout << "No space available in the render client to play back all the captured audio frames" << std::endl;
+                }
+                else
+                {
+                    // Grab all the available space in the shared buffer.
+                    BYTE* pData = NULL;
 
-                // Resample the audio stream to the desired output format
-                UINT32 framesWritten = 0;
-                resampleAudioStream(Data, pData, FramesAvailable, clientFramesAvailable, framesWritten);
-                std::cout << "Resampled " << FramesAvailable << " frames into " << framesWritten << " frames. Requested frames " << (int)(FramesAvailable * samplingRatio) +1<< std::endl;
+                    hr = m_OutputRenderClient->GetBuffer((int)(FramesAvailable * samplingRatio) + 1, &pData);
+                    RETURN_IF_FAILED(hr);
 
-                // Release the render client's buffer back
-                hr = m_OutputRenderClient->ReleaseBuffer(framesWritten, 0);
-                RETURN_IF_FAILED(hr);
+                    // Resample the audio stream to the desired output format
+                    UINT32 framesWritten = 0;
+                    resampleAudioStream(Data, pData, FramesAvailable, clientFramesAvailable, framesWritten);
+                    std::cout << "Resampled " << FramesAvailable << " frames into " << framesWritten << " frames. Requested frames " << (int)(FramesAvailable * samplingRatio) + 1 << std::endl;
+
+                    // Release the render client's buffer back
+                    hr = m_OutputRenderClient->ReleaseBuffer(framesWritten, 0);
+                    RETURN_IF_FAILED(hr);
+                }
+
             }
 
+            // Release the loopback capture's buffer back
+            hr = m_AudioCaptureClient->ReleaseBuffer(FramesAvailable);
+            RETURN_IF_FAILED(hr);
+
+            // Increase the size of our 'data' chunk.  m_cbDataSize needs to be accurate
+            m_cbDataSize += cbBytesToCapture;
         }
-
-        // Release the loopback capture's buffer back
-        hr = m_AudioCaptureClient->ReleaseBuffer(FramesAvailable);
-        RETURN_IF_FAILED(hr);
-
-        // Increase the size of our 'data' chunk.  m_cbDataSize needs to be accurate
-        m_cbDataSize += cbBytesToCapture;
+        QueryPerformanceCounter(&OnAudioSampleRequestedEndTime);
+        LONGLONG OnAudioSampleRequestedElapsedTime = ((OnAudioSampleRequestedEndTime.QuadPart - OnAudioSampleRequestedStartTime.QuadPart) * 1000000) / frequency.QuadPart;
+        std::cout << __FUNCTION__ << " execution took " << OnAudioSampleRequestedElapsedTime << "us" << std::endl;
     }
+    // END TIMING BLOCK
+
+
 
     if (FramesAvailable == 0)
     {

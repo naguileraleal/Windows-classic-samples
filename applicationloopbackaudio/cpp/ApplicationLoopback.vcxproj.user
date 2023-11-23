@@ -1,11 +1,12 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>22220 includetree CapturedAudio.wav "Realtek HD" Sync</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>26384 includetree CapturedAudio.wav "Realtek HD" Async</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerDebuggerType>NativeOnly</LocalDebuggerDebuggerType>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerCommandArguments>22220 includetree CapturedAudio.wav Speakers</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>4640 includetree CapturedAudio.wav Speakers Sync</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
 </Project>

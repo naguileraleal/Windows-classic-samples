@@ -80,7 +80,6 @@ private:
     wil::unique_event_nothrow m_hActivateCompleted;
     wil::unique_event_nothrow m_hCaptureStopped;
 
-    WAVEFORMATEXTENSIBLE* m_pOutputFormat = NULL;
     bool m_bAudioStreamStarted = false;
     UINT64 m_u64QPCPositionPrev = 0;
     IAudioClock* m_pAudioClock = NULL;

@@ -2,6 +2,29 @@
 
 #include <iostream>
 
+LoopbackCaptureBase::LoopbackCaptureBase()
+{
+    // The only supported format is he 16-bit PCM format!
+    // 16 - bit PCM format.
+    m_CaptureFormat.wFormatTag = WAVE_FORMAT_PCM;
+    m_CaptureFormat.nChannels = 2;
+    m_CaptureFormat.nSamplesPerSec = 44100;
+    m_CaptureFormat.wBitsPerSample = 16;
+    m_CaptureFormat.nBlockAlign = m_CaptureFormat.nChannels * m_CaptureFormat.wBitsPerSample / BITS_PER_BYTE;
+    m_CaptureFormat.nAvgBytesPerSec = m_CaptureFormat.nSamplesPerSec *m_CaptureFormat.nBlockAlign;
+    m_CaptureFormat.cbSize = 0;
+
+    // What happens if I put another format
+    // It captures fine with this as well.
+    //m_CaptureFormat.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+    //m_CaptureFormat.nChannels = 2;
+    //m_CaptureFormat.nSamplesPerSec = 48000;
+    //m_CaptureFormat.wBitsPerSample = 32;
+    //m_CaptureFormat.nBlockAlign = m_CaptureFormat.nChannels * m_CaptureFormat.wBitsPerSample / BITS_PER_BYTE;
+    //m_CaptureFormat.nAvgBytesPerSec = m_CaptureFormat.nSamplesPerSec *m_CaptureFormat.nBlockAlign;
+    //m_CaptureFormat.cbSize = 0;
+}
+
 /**
 * Initializes a Media Foundation audio resampler
 * Taken from https://sourceforge.net/p/playpcmwin/wiki/HowToUseResamplerMFT/
@@ -69,12 +92,12 @@ Exit:
 
 void LoopbackCaptureBase::resampleAudioStream(BYTE* src, BYTE* dst, UINT32 framesAvailable, UINT32 clientFramesAvailable, UINT32& framesWritten)
 {
+    BYTE  *data = src; //< input PCM data 
+    DWORD bytes = framesAvailable * m_CaptureFormat.nBlockAlign; //< bytes need to be smaller than approx. 1Mbytes
+    HRESULT hr = S_OK;
+
 	if (m_ResamplerTransform != nullptr)
 	{
-		BYTE  *data = src; //< input PCM data 
-		DWORD bytes = framesAvailable * m_CaptureFormat.nBlockAlign; //< bytes need to be smaller than approx. 1Mbytes
-		HRESULT hr = S_OK;
-
 		MFT_OUTPUT_STREAM_INFO outputStreamInfo;
 		m_ResamplerTransform->GetOutputStreamInfo(0, &outputStreamInfo);
 
@@ -124,89 +147,95 @@ void LoopbackCaptureBase::resampleAudioStream(BYTE* src, BYTE* dst, UINT32 frame
 		outSampleBuffer->Unlock();
 
 		framesWritten = cbBytes / m_pOutputFormat->Format.nBlockAlign;
-	}
-	// If MFT is not available, use linear interpolation
-	else if (m_pOutputFormat != nullptr)
-	{
-		// Resample the audio stream to the desired output format
-		if (m_pOutputFormat->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)
-		{
-			if (m_pOutputFormat->Format.wBitsPerSample == 32)
-			{
+    }
+    else
+    {
+        // No transformation applied
+        memcpy(dst, src, bytes);
+        framesWritten = framesAvailable;
+    }
+	//// If MFT is not available, use linear interpolation
+	//else if (m_pOutputFormat != nullptr)
+	//{
+	//	// Resample the audio stream to the desired output format
+	//	if (m_pOutputFormat->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)
+	//	{
+	//		if (m_pOutputFormat->Format.wBitsPerSample == 32)
+	//		{
 
-				// TODO: DEBUGGING! DELETE TIMING CODE!
-				LARGE_INTEGER frequency, startTime, endTime;
-				QueryPerformanceFrequency(&frequency);
-				QueryPerformanceCounter(&startTime);
-				// Convert from 16-bit PCM to 32-bit float. No sample rate change!
-				//for (int i = 0; i < framesAvailable; i++)
-				//{
-				//	int16_t* srcPtr = (int16_t*)(src + i * m_CaptureFormat.nBlockAlign);
-				//	float* dstPtr = (float*)(dst + i * m_pOutputFormat->Format.nBlockAlign);
+	//			// TODO: DEBUGGING! DELETE TIMING CODE!
+	//			LARGE_INTEGER frequency, startTime, endTime;
+	//			QueryPerformanceFrequency(&frequency);
+	//			QueryPerformanceCounter(&startTime);
+	//			// Convert from 16-bit PCM to 32-bit float. No sample rate change!
+	//			//for (int i = 0; i < framesAvailable; i++)
+	//			//{
+	//			//	int16_t* srcPtr = (int16_t*)(src + i * m_CaptureFormat.nBlockAlign);
+	//			//	float* dstPtr = (float*)(dst + i * m_pOutputFormat->Format.nBlockAlign);
 
-				//	for (auto channel = 0; channel < m_CaptureFormat.nChannels; channel++)
-				//	{
-				//		*dstPtr = (float)(*srcPtr / 32768.0f);
-				//		dstPtr++;
-				//		srcPtr++;
-				//	}
-				//}
-				// Perform linear interpolation if needed
-				float sampleRatio = (float)m_pOutputFormat->Format.nSamplesPerSec / (float)m_CaptureFormat.nSamplesPerSec; // Ratio between the two sample rates
-				auto srcSamples = framesAvailable * m_CaptureFormat.nChannels; // Number of bytes in the input buffer
-				int dstFrames = (int)(framesAvailable * sampleRatio); // Number of frames in the output buffer
-				framesWritten = dstFrames;
-				int dstSamples = dstFrames * m_pOutputFormat->Format.nChannels; // Number of bytes in the output buffer
+	//			//	for (auto channel = 0; channel < m_CaptureFormat.nChannels; channel++)
+	//			//	{
+	//			//		*dstPtr = (float)(*srcPtr / 32768.0f);
+	//			//		dstPtr++;
+	//			//		srcPtr++;
+	//			//	}
+	//			//}
+	//			// Perform linear interpolation if needed
+	//			float sampleRatio = (float)m_pOutputFormat->Format.nSamplesPerSec / (float)m_CaptureFormat.nSamplesPerSec; // Ratio between the two sample rates
+	//			auto srcSamples = framesAvailable * m_CaptureFormat.nChannels; // Number of bytes in the input buffer
+	//			int dstFrames = (int)(framesAvailable * sampleRatio); // Number of frames in the output buffer
+	//			framesWritten = dstFrames;
+	//			int dstSamples = dstFrames * m_pOutputFormat->Format.nChannels; // Number of bytes in the output buffer
 
-				for (auto i = 0; i < dstSamples; i++)
-				{
-					if (i >= clientFramesAvailable)
-					{
-						// Avoid overwriting buffer
-						break;
-					}
-					float realPos = i / sampleRatio;
-					int iLow = (int)realPos;
-					int iHigh = iLow + 1;
-					float remainder = realPos - (float)iLow;
+	//			for (auto i = 0; i < dstSamples; i++)
+	//			{
+	//				if (i >= clientFramesAvailable)
+	//				{
+	//					// Avoid overwriting buffer
+	//					break;
+	//				}
+	//				float realPos = i / sampleRatio;
+	//				int iLow = (int)realPos;
+	//				int iHigh = iLow + 1;
+	//				float remainder = realPos - (float)iLow;
 
-					float lowval = 0;
-					float highval = 0;
-					if ((iLow >= 0) && (iLow < srcSamples))
-					{
-						lowval = ((int16_t*)src)[iLow] / 32768.0f;
-					}
-					if ((iHigh >= 0) && (iHigh < srcSamples))
-					{
-						highval = ((int16_t*)src)[iHigh] / 32768.0f;
-					}
+	//				float lowval = 0;
+	//				float highval = 0;
+	//				if ((iLow >= 0) && (iLow < srcSamples))
+	//				{
+	//					lowval = ((int16_t*)src)[iLow] / 32768.0f;
+	//				}
+	//				if ((iHigh >= 0) && (iHigh < srcSamples))
+	//				{
+	//					highval = ((int16_t*)src)[iHigh] / 32768.0f;
+	//				}
 
-					((float*)dst)[i] = (highval * remainder) + (lowval * (1 - remainder));
-				}
-
-
-				QueryPerformanceCounter(&endTime);
-				LONGLONG elapsedTime = ((endTime.QuadPart - startTime.QuadPart) * 1000000) / frequency.QuadPart;
-				std::cout << "Execution took " << elapsedTime << "us" << std::endl;
-				// END TIMING BLOCK
+	//				((float*)dst)[i] = (highval * remainder) + (lowval * (1 - remainder));
+	//			}
 
 
-			}
-			else if (m_pOutputFormat->Format.wBitsPerSample == 64)
-			{
-				// Convert from 16-bit PCM to 64-bit float
-				for (int i = 0; i < framesAvailable; i++)
-				{
-					int16_t* srcPtr = (int16_t*)(src + i * m_CaptureFormat.nBlockAlign);
-					double* dstPtr = (double*)(dst + i * m_pOutputFormat->Format.nBlockAlign);
-					for (auto channel = 0; channel < m_CaptureFormat.nChannels; channel++)
-					{
-						*dstPtr = (double)(*srcPtr / 32768.0f);
-						dstPtr++;
-						srcPtr++;
-					}
-				}
-			}
-		}
-	}
+	//			QueryPerformanceCounter(&endTime);
+	//			LONGLONG elapsedTime = ((endTime.QuadPart - startTime.QuadPart) * 1000000) / frequency.QuadPart;
+	//			std::cout << "Execution took " << elapsedTime << "us" << std::endl;
+	//			// END TIMING BLOCK
+
+
+	//		}
+	//		else if (m_pOutputFormat->Format.wBitsPerSample == 64)
+	//		{
+	//			// Convert from 16-bit PCM to 64-bit float
+	//			for (int i = 0; i < framesAvailable; i++)
+	//			{
+	//				int16_t* srcPtr = (int16_t*)(src + i * m_CaptureFormat.nBlockAlign);
+	//				double* dstPtr = (double*)(dst + i * m_pOutputFormat->Format.nBlockAlign);
+	//				for (auto channel = 0; channel < m_CaptureFormat.nChannels; channel++)
+	//				{
+	//					*dstPtr = (double)(*srcPtr / 32768.0f);
+	//					dstPtr++;
+	//					srcPtr++;
+	//				}
+	//			}
+	//		}
+	//	}
+	//}
 }

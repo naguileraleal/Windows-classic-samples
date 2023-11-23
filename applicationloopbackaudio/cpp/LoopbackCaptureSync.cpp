@@ -6,8 +6,6 @@
 
 #include "LoopbackCaptureSync.h"
 
-#define BITS_PER_BYTE 8
-
 HRESULT LoopbackCaptureSync::SetDeviceStateErrorIfFailed(HRESULT hr)
 {
     if (FAILED(hr))
@@ -110,17 +108,6 @@ HRESULT LoopbackCaptureSync::ActivateCompleted(IActivateAudioInterfaceAsyncOpera
                 std::wcout << L"QueryInterface Error: " << s << std::endl;
             }
 
-            // The app can also call m_AudioClient->GetMixFormat instead to get the capture format.
-            // The only supported format is he 16-bit PCM format!
-            // 16 - bit PCM format.
-            m_CaptureFormat.wFormatTag = WAVE_FORMAT_PCM;
-            m_CaptureFormat.nChannels = 2;
-            m_CaptureFormat.nSamplesPerSec = 44100;
-            m_CaptureFormat.wBitsPerSample = 16;
-            m_CaptureFormat.nBlockAlign = m_CaptureFormat.nChannels * m_CaptureFormat.wBitsPerSample / BITS_PER_BYTE;
-            m_CaptureFormat.nAvgBytesPerSec = m_CaptureFormat.nSamplesPerSec *m_CaptureFormat.nBlockAlign;
-            m_CaptureFormat.cbSize = 0;
-
             // output format will be null if there's no output client
             if (m_pOutputFormat)
             {
@@ -165,11 +152,23 @@ HRESULT LoopbackCaptureSync::ActivateCompleted(IActivateAudioInterfaceAsyncOpera
             // Initialize the AudioClient in Shared Mode with the user specified buffer
             // Note: It is a lie that the audio client resamples the audio to the output format. It does not even resample it to the sample rate!
             RETURN_IF_FAILED(m_AudioClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+                AUDCLNT_STREAMFLAGS_LOOPBACK,
                 0,
                 0,
                 &m_CaptureFormat,
                 nullptr));
+
+            //WAVEFORMATEX* effectiveCaptureFormat = {};
+            //hr = m_AudioClient->GetMixFormat(&effectiveCaptureFormat);
+            //std::cout << "Capture client effective mix format: ";
+            //std::cout << "  wFormatTags    : 0x" << std::hex << effectiveCaptureFormat->wFormatTag << std::dec << std::endl;
+            //std::cout << "  nChannels      : " << effectiveCaptureFormat->nChannels << std::endl;
+            //std::cout << "  nSamplesPerSec : " << effectiveCaptureFormat->nSamplesPerSec << std::endl;
+            //std::cout << "  nAvgBytesPerSec: " << effectiveCaptureFormat->nAvgBytesPerSec << std::endl;
+            //std::cout << "  nBlockAlign    : " << effectiveCaptureFormat->nBlockAlign << std::endl;
+            //std::cout << "  wBitsPerSample : " << effectiveCaptureFormat->wBitsPerSample << std::endl;
+            //std::cout << "  cbSize         : " << effectiveCaptureFormat->cbSize << std::endl;
+
 
             // Get the maximum size of the AudioClient Buffer
             RETURN_IF_FAILED(m_AudioClient->GetBufferSize(&m_BufferFrames));

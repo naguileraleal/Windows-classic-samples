@@ -207,6 +207,9 @@ HRESULT calculateMixFormatType(WAVEFORMATEX* _mixFormat)
 */
 HRESULT initializeOutputClient(LoopbackCaptureBase* capturer, PCWSTR friendlyName)
 {
+
+    std::cout << "\n\n#####################" << __FUNCTION__ << "#####################\n\n";
+
     HRESULT hr;
     IMMDeviceEnumerator* pEnumerator = NULL;
     IMMDevice* pDevice = NULL;
@@ -222,6 +225,15 @@ HRESULT initializeOutputClient(LoopbackCaptureBase* capturer, PCWSTR friendlyNam
     BYTE* pData;
     DWORD flags = 0;
     int i = 0;
+
+    // This format is also supported by the loopback capture!
+    //pDesiredFormat->Format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+    //pDesiredFormat->Format.nChannels = 2;
+    //pDesiredFormat->Format.nSamplesPerSec = 48000;
+    //pDesiredFormat->Format.wBitsPerSample = 32;
+    //pDesiredFormat->Format.nBlockAlign = pDesiredFormat->Format.nChannels * pDesiredFormat->Format.wBitsPerSample / BITS_PER_BYTE;
+    //pDesiredFormat->Format.nAvgBytesPerSec = pDesiredFormat->Format.nSamplesPerSec *pDesiredFormat->Format.nBlockAlign;
+    //pDesiredFormat->Format.cbSize = 0;
 
     pDesiredFormat->Format.wFormatTag = WAVE_FORMAT_PCM;
     pDesiredFormat->Format.nChannels = 2;
@@ -302,7 +314,7 @@ HRESULT initializeOutputClient(LoopbackCaptureBase* capturer, PCWSTR friendlyNam
                 hr = pAudioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 0, 0, &pDesiredFormat->Format, NULL);
                 _com_error err(hr);
                 LPCTSTR errMsg = err.ErrorMessage();
-                std::cout << "Error: " << errMsg << std::endl;
+                std::wcout << L"Error: " << std::wstring(errMsg) << std::endl;
                 EXIT_ON_ERROR(hr)
                 capturer->setOutputFormat(pDesiredFormat);
         }
@@ -323,12 +335,52 @@ HRESULT initializeOutputClient(LoopbackCaptureBase* capturer, PCWSTR friendlyNam
             capturer->setOutputFormat(pClosestMatch);
         }
 
+        // Print the effective configuration of the output Audio Client
+        // Get the device period
+        REFERENCE_TIME hnsDefaultDevicePeriod;
+        REFERENCE_TIME hnsMinimumDevicePeriod;
+        hr = pAudioClient->GetDevicePeriod(&hnsDefaultDevicePeriod, &hnsMinimumDevicePeriod);
+        if (FAILED(hr))
+        {
+            // Print message from hresult
+            _com_error err(hr);
+            LPCTSTR errMsg = err.ErrorMessage();
+            std::wstring s(errMsg);
+            std::wcout << L"GetDevicePeriod error: " << s << std::endl;
+        }
+        else
+        {
+            std::cout << "Default device period: " << hnsDefaultDevicePeriod/10 << "us" << " Minimum device period: " << hnsMinimumDevicePeriod/10 << "us" << std::endl;
+        }
+
+        // Get the maximum size of the AudioClient Buffer
+        UINT32 bufferFrames = 0;
+        RETURN_IF_FAILED(pAudioClient->GetBufferSize(&bufferFrames));
+        std::cout << "Buffer size: " << bufferFrames << " frames" << std::endl;
+
+        REFERENCE_TIME hnsStreamLatency;
+        hr = pAudioClient->GetStreamLatency(&hnsStreamLatency);
+        if (FAILED(hr))
+        {
+            // Print message from hresult
+            _com_error err(hr);
+            LPCTSTR errMsg = err.ErrorMessage();
+            std::wstring s(errMsg);
+            std::wcout << L"GetDevicePeriod error: " << s << std::endl;
+        }
+        else
+        {
+            std::cout << "Output client's stream latency: " << hnsStreamLatency/10 << "us" << std::endl;
+        }
+
         hr = pAudioClient->GetService(IID_IAudioRenderClient, (void**)&pRenderClient);
         EXIT_ON_ERROR(hr)
 
         capturer->setAudioRenderClient(pRenderClient);
         capturer->setAudioClient(pAudioClient);
     }
+
+    std::cout << "\n\n##################### Leaving " << __FUNCTION__ << "#####################\n\n";
 
     return hr;
 
@@ -369,8 +421,8 @@ void loopbackCaptureSync(DWORD processId, bool includeProcessTree, PCWSTR output
 void loopbackCaptureAsync(DWORD processId, bool includeProcessTree, PCWSTR outputFile, PCWSTR outputFriendlyName)
 {
     CLoopbackCapture loopbackCapture;
-    initializeOutputClient(&loopbackCapture, outputFriendlyName);
 
+    initializeOutputClient(&loopbackCapture, outputFriendlyName);
     HRESULT hr = loopbackCapture.StartCaptureAsync(processId, includeProcessTree, outputFile);
     if (FAILED(hr))
     {
